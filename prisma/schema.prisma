@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SessionStatus {
+  DRAFT
+  ACTIVE
+  COMPLETE
+  ARCHIVED
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String?   @unique
+  name      String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  sessions  Session[]
+}
+
+model Session {
+  id             String        @id @default(cuid())
+  title          String?
+  scenario       String?
+  status         SessionStatus @default(DRAFT)
+  sourceLanguage String?
+  targetLanguage String?
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  transcripts    Transcript[]
+  summaries      Summary[]
+  alerts         Alert[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([userId])
+}
+
+model Transcript {
+  id           String    @id @default(cuid())
+  sessionId    String
+  session      Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  speakerLabel String?
+  content      String
+  eventType    String?
+  confidence   Float?
+  startedAt    DateTime?
+  endedAt      DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model Summary {
+  id        String   @id @default(cuid())
+  sessionId String
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  content   String
+  tone      String?
+  createdAt DateTime @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model Alert {
+  id          String        @id @default(cuid())
+  sessionId   String
+  session     Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  label       String
+  description String?
+  severity    AlertSeverity @default(MEDIUM)
+  createdAt   DateTime      @default(now())
+
+  @@index([sessionId, severity, createdAt])
+}
