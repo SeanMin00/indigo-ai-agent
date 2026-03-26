@@ -22,6 +22,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@google/genai": "^1.46.0",
     "@prisma/client": "latest",
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "latest",

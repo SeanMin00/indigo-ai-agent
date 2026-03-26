@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const setupCards = [
   {
     title: "Application",
@@ -35,6 +37,22 @@ export default function HomePage() {
           This repo is ready for the next layer of work: user flows, Supabase
           project connection, authentication, and the first real-time AI
           interaction loop for deaf and hard-of-hearing users.
+        </p>
+        <p style={{ marginTop: 14 }}>
+          <Link
+            href="/gemini"
+            style={{
+              display: "inline-flex",
+              padding: "10px 14px",
+              borderRadius: 12,
+              background: "var(--accent-soft)",
+              color: "var(--accent)",
+              fontWeight: 700,
+              border: "1px solid var(--border)",
+            }}
+          >
+            Gemini 테스트 열기
+          </Link>
         </p>
       </section>
 
