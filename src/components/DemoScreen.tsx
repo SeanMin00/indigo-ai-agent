@@ -58,121 +58,6 @@ const INITIAL_STEPS: AgentStep[] = [
   },
 ];
 
-/* ── Demo simulation data (used when backend not connected) */
-
-type SimStep = { delay: number; msg: ServerMessage };
-
-const SIREN_SIM: SimStep[] = [
-  {
-    delay: 600,
-    msg: { type: "sound_detected", text: "Siren detected", latency_ms: 620 },
-  },
-  {
-    delay: 1400,
-    msg: {
-      type: "agent_update",
-      agent: "dispatch",
-      status: "active",
-      output: 'DispatchAgent: "this is a siren" — classifying vehicle type',
-    },
-  },
-  {
-    delay: 2300,
-    msg: {
-      type: "agent_update",
-      agent: "dispatch",
-      status: "done",
-      output: "Siren confirmed — high confidence",
-    },
-  },
-  {
-    delay: 2400,
-    msg: {
-      type: "agent_update",
-      agent: "vehicle",
-      status: "active",
-      output: "VehicleSoundAgent: fire engine, approaching from rear",
-    },
-  },
-  {
-    delay: 3200,
-    msg: {
-      type: "agent_update",
-      agent: "vehicle",
-      status: "done",
-      output: "Risk: HIGH — W 23rd, on foot, intersection",
-    },
-  },
-  {
-    delay: 4000,
-    msg: {
-      type: "alert",
-      scenario: "siren",
-      title: "Emergency vehicle approaching",
-      subtitle: "Check surroundings and yield — W 23rd St",
-      risk: "HIGH",
-    },
-  },
-];
-
-const HOSPITAL_SIM: SimStep[] = [
-  {
-    delay: 600,
-    msg: {
-      type: "sound_detected",
-      text: "PA speech detected",
-      latency_ms: 810,
-    },
-  },
-  {
-    delay: 1400,
-    msg: {
-      type: "agent_update",
-      agent: "dispatch",
-      status: "active",
-      output:
-        'DispatchAgent: "announcement heard" — scanning for registered name',
-    },
-  },
-  {
-    delay: 2300,
-    msg: {
-      type: "agent_update",
-      agent: "dispatch",
-      status: "done",
-      output: "Name match found: Alex Kim",
-    },
-  },
-  {
-    delay: 2400,
-    msg: {
-      type: "agent_update",
-      agent: "name",
-      status: "active",
-      output: "NameDetectionAgent: extracting location from announcement",
-    },
-  },
-  {
-    delay: 3200,
-    msg: {
-      type: "agent_update",
-      agent: "name",
-      status: "done",
-      output: "Exam Room 3, 2nd floor — wayfinding: north wing",
-    },
-  },
-  {
-    delay: 4000,
-    msg: {
-      type: "alert",
-      scenario: "name",
-      title: "Your name was called",
-      subtitle: "Exam Room 3 — 2nd floor north wing",
-      risk: "MEDIUM",
-    },
-  },
-];
-
 /* ── Map WebSocket agent_update to step index ───────────── */
 
 function agentToStepIndex(agent: string, status: "active" | "done"): number {
@@ -191,7 +76,7 @@ type DemoScreenProps = {
   onLogout: () => void;
 };
 
-const WS_URL = "ws://localhost:8001/ws";
+const WS_URL = "ws://localhost:3000/api/live/ingest";
 
 export default function DemoScreen({
   userName,
@@ -296,10 +181,17 @@ export default function DemoScreen({
 
   /* ── WebSocket (real backend) ─────────────────────────── */
 
-  const { connected, connect, disconnect, sendAudioChunk } = useAgentWebSocket({
+  const {
+    connected,
+    connect,
+    disconnect,
+    sendAudioChunk,
+    runScenarioDemo,
+  } = useAgentWebSocket({
     url: WS_URL,
     userName,
     userId: "demo-user",
+    scenario: sc,
     onMessage: handleMessage,
   });
 
@@ -365,12 +257,7 @@ export default function DemoScreen({
     );
 
     if (sc === "siren") setRadarActive(true);
-
-    const sim = sc === "siren" ? SIREN_SIM : HOSPITAL_SIM;
-    const newTimers = sim.map(({ delay, msg }) =>
-      setTimeout(() => handleMessage(msg), delay),
-    );
-    timersRef.current = newTimers;
+    runScenarioDemo();
   }
 
   /* ── Watch alert mapping ──────────────────────────────── */
