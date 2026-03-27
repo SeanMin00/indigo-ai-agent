@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: myindigo-ai-service
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.34.0
+Requires-Dist: websockets>=14.0
+Requires-Dist: google-adk>=1.0.0
+Requires-Dist: google-genai>=1.0.0
+Requires-Dist: python-dotenv>=1.0.0

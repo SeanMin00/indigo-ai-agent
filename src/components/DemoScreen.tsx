@@ -9,7 +9,7 @@ import {
   useAgentWebSocket,
   type ServerMessage,
 } from "@/hooks/useAgentWebSocket";
-import type { AgentStep } from "./AgentPanel";
+import type { AgentStep, ThoughtEntry } from "./AgentPanel";
 
 export type AlertEvent = {
   scenario: "siren" | "hospital";
@@ -68,12 +68,23 @@ const SIREN_SIM: SimStep[] = [
     msg: { type: "sound_detected", text: "Siren detected", latency_ms: 620 },
   },
   {
-    delay: 1400,
+    delay: 1100,
     msg: {
       type: "agent_update",
       agent: "dispatch",
       status: "active",
-      output: 'DispatchAgent: "this is a siren" — classifying vehicle type',
+      output:
+        "Analyzing audio spectrum... frequency pattern matches emergency siren",
+    },
+  },
+  {
+    delay: 1800,
+    msg: {
+      type: "agent_update",
+      agent: "dispatch",
+      status: "active",
+      output:
+        "Classification: emergency vehicle siren — delegating to VehicleSoundAgent",
     },
   },
   {
@@ -82,29 +93,39 @@ const SIREN_SIM: SimStep[] = [
       type: "agent_update",
       agent: "dispatch",
       status: "done",
-      output: "Siren confirmed — high confidence",
+      output: "Siren confirmed — high confidence (0.96)",
     },
   },
   {
-    delay: 2400,
+    delay: 2500,
     msg: {
       type: "agent_update",
       agent: "vehicle",
       status: "active",
-      output: "VehicleSoundAgent: fire engine, approaching from rear",
+      output: "Identifying vehicle type from harmonic signature...",
     },
   },
   {
-    delay: 3200,
+    delay: 3000,
+    msg: {
+      type: "agent_update",
+      agent: "vehicle",
+      status: "active",
+      output:
+        "Fire engine detected — Doppler shift indicates approach from rear",
+    },
+  },
+  {
+    delay: 3500,
     msg: {
       type: "agent_update",
       agent: "vehicle",
       status: "done",
-      output: "Risk: HIGH — W 23rd, on foot, intersection",
+      output: "Risk: HIGH — W 23rd St, pedestrian near intersection",
     },
   },
   {
-    delay: 4000,
+    delay: 4200,
     msg: {
       type: "alert",
       scenario: "siren",
@@ -125,13 +146,22 @@ const HOSPITAL_SIM: SimStep[] = [
     },
   },
   {
-    delay: 1400,
+    delay: 1100,
+    msg: {
+      type: "agent_update",
+      agent: "dispatch",
+      status: "active",
+      output: "Transcribing PA audio... speech-to-text running",
+    },
+  },
+  {
+    delay: 1700,
     msg: {
       type: "agent_update",
       agent: "dispatch",
       status: "active",
       output:
-        'DispatchAgent: "announcement heard" — scanning for registered name',
+        'Transcript: "Alex Kim, please report to Exam Room 3" — scanning for registered name',
     },
   },
   {
@@ -140,20 +170,30 @@ const HOSPITAL_SIM: SimStep[] = [
       type: "agent_update",
       agent: "dispatch",
       status: "done",
-      output: "Name match found: Alex Kim",
+      output:
+        "Name match: Alex Kim (registered user) — delegating to NameDetectionAgent",
     },
   },
   {
-    delay: 2400,
+    delay: 2600,
     msg: {
       type: "agent_update",
       agent: "name",
       status: "active",
-      output: "NameDetectionAgent: extracting location from announcement",
+      output: "Parsing announcement for location references...",
     },
   },
   {
-    delay: 3200,
+    delay: 3100,
+    msg: {
+      type: "agent_update",
+      agent: "name",
+      status: "active",
+      output: 'Location extracted: "Exam Room 3" — resolving floor + wing',
+    },
+  },
+  {
+    delay: 3600,
     msg: {
       type: "agent_update",
       agent: "name",
@@ -162,7 +202,7 @@ const HOSPITAL_SIM: SimStep[] = [
     },
   },
   {
-    delay: 4000,
+    delay: 4300,
     msg: {
       type: "alert",
       scenario: "name",
@@ -206,93 +246,130 @@ export default function DemoScreen({
   const [radarActive, setRadarActive] = useState(false);
   const [locationText, setLocationText] = useState("Chelsea, NY 10011");
   const [isLive, setIsLive] = useState(false);
+  const [thoughts, setThoughts] = useState<ThoughtEntry[]>([]);
 
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef = useRef(0);
+  const thoughtIdRef = useRef(0);
+
+  const addThought = useCallback(
+    (agent: string, text: string, kind: ThoughtEntry["kind"] = "thinking") => {
+      setThoughts((prev) => [
+        ...prev,
+        {
+          id: ++thoughtIdRef.current,
+          timestamp: Date.now(),
+          agent,
+          text,
+          kind,
+        },
+      ]);
+    },
+    [],
+  );
 
   /* ── Handle any message (from WS or demo sim) ────────── */
 
-  const handleMessage = useCallback((msg: ServerMessage) => {
-    if (msg.type === "sound_detected") {
-      // Step 0: DispatchAgent heard something
-      setRadarActive(true);
-      startRef.current = Date.now();
-      intervalRef.current = setInterval(() => {
-        setElapsed(Date.now() - startRef.current);
-      }, 100);
+  const handleMessage = useCallback(
+    (msg: ServerMessage) => {
+      if (msg.type === "sound_detected") {
+        // Step 0: DispatchAgent heard something
+        addThought(
+          "dispatch",
+          `Audio input detected: "${msg.text}" (${msg.latency_ms}ms)`,
+        );
+        setRadarActive(true);
+        startRef.current = Date.now();
+        intervalRef.current = setInterval(() => {
+          setElapsed(Date.now() - startRef.current);
+        }, 100);
 
-      setSteps((prev) => {
-        const next = prev.map((s) => ({ ...s }));
-        next[0] = {
-          ...next[0],
-          status: "active",
-          label: `Sound detected — ${msg.text}`,
-          sub: `Gemini Live: latency ${msg.latency_ms}ms`,
-        };
-        return next;
-      });
-    } else if (msg.type === "agent_update") {
-      const idx = agentToStepIndex(msg.agent, msg.status);
-      if (idx < 0) return;
+        setSteps((prev) => {
+          const next = prev.map((s) => ({ ...s }));
+          next[0] = {
+            ...next[0],
+            status: "active",
+            label: `Sound detected — ${msg.text}`,
+            sub: `Gemini Live: latency ${msg.latency_ms}ms`,
+          };
+          return next;
+        });
+      } else if (msg.type === "agent_update") {
+        const agentLabel =
+          msg.agent === "dispatch"
+            ? "dispatch"
+            : msg.agent === "vehicle"
+              ? "vehicle"
+              : "name";
+        addThought(
+          agentLabel,
+          msg.output,
+          msg.status === "done" ? "result" : "thinking",
+        );
+        const idx = agentToStepIndex(msg.agent, msg.status);
+        if (idx < 0) return;
 
-      setSteps((prev) => {
-        const next = prev.map((s) => ({ ...s }));
+        setSteps((prev) => {
+          const next = prev.map((s) => ({ ...s }));
 
-        // Mark step 0 done when dispatch starts
-        if (idx === 1 && next[0].status === "active") {
-          next[0] = { ...next[0], status: "done" };
-        }
-        // Mark dispatch done when specialist starts
-        if (idx === 2 && next[1].status !== "done") {
-          next[1] = { ...next[1], status: "done" };
-        }
-        // Mark specialist active→done when risk scored
-        if (idx === 3 && next[2].status === "active") {
-          next[2] = { ...next[2], status: "done" };
-        }
-
-        next[idx] = {
-          ...next[idx],
-          status: msg.status,
-          label: msg.output.split("—")[0].trim() || next[idx].label,
-          sub: msg.output,
-        };
-
-        return next;
-      });
-    } else if (msg.type === "alert") {
-      // Stop timer
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      setElapsed(Date.now() - startRef.current);
-
-      // Mark remaining steps done
-      setSteps((prev) => {
-        const next = prev.map((s) => ({ ...s }));
-        for (let i = 0; i < 4; i++) {
-          if (next[i].status !== "done") {
-            next[i] = { ...next[i], status: "done" };
+          // Mark step 0 done when dispatch starts
+          if (idx === 1 && next[0].status === "active") {
+            next[0] = { ...next[0], status: "done" };
           }
-        }
-        next[4] = {
-          ...next[4],
-          status: "done",
-          label: "Alert dispatched to phone + watch",
-          sub: `${msg.title} — ${msg.risk}`,
-        };
-        return next;
-      });
+          // Mark dispatch done when specialist starts
+          if (idx === 2 && next[1].status !== "done") {
+            next[1] = { ...next[1], status: "done" };
+          }
+          // Mark specialist active→done when risk scored
+          if (idx === 3 && next[2].status === "active") {
+            next[2] = { ...next[2], status: "done" };
+          }
 
-      const scenario = msg.scenario === "name" ? "hospital" : "siren";
+          next[idx] = {
+            ...next[idx],
+            status: msg.status,
+            label: msg.output.split("—")[0].trim() || next[idx].label,
+            sub: msg.output,
+          };
 
-      setAlert({
-        scenario,
-        title: msg.title,
-        subtitle: msg.subtitle,
-        risk: msg.risk,
-      });
-    }
-  }, []);
+          return next;
+        });
+      } else if (msg.type === "alert") {
+        addThought("system", `ALERT: ${msg.title} — ${msg.risk}`, "alert");
+        // Stop timer
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        setElapsed(Date.now() - startRef.current);
+
+        // Mark remaining steps done
+        setSteps((prev) => {
+          const next = prev.map((s) => ({ ...s }));
+          for (let i = 0; i < 4; i++) {
+            if (next[i].status !== "done") {
+              next[i] = { ...next[i], status: "done" };
+            }
+          }
+          next[4] = {
+            ...next[4],
+            status: "done",
+            label: "Alert dispatched to phone + watch",
+            sub: `${msg.title} — ${msg.risk}`,
+          };
+          return next;
+        });
+
+        const scenario = msg.scenario === "name" ? "hospital" : "siren";
+
+        setAlert({
+          scenario,
+          title: msg.title,
+          subtitle: msg.subtitle,
+          risk: msg.risk,
+        });
+      }
+    },
+    [addThought],
+  );
 
   /* ── WebSocket (real backend) ─────────────────────────── */
 
@@ -307,6 +384,7 @@ export default function DemoScreen({
 
   const {
     capturing,
+    micError,
     start: startAudio,
     stop: stopAudio,
   } = useAudioCapture({
@@ -323,6 +401,8 @@ export default function DemoScreen({
     setAlert(null);
     setRadarActive(false);
     setSteps(INITIAL_STEPS.map((s) => ({ ...s })));
+    setThoughts([]);
+    thoughtIdRef.current = 0;
   }, []);
 
   /* ── Switch scenario ──────────────────────────────────── */
@@ -358,7 +438,7 @@ export default function DemoScreen({
 
   /* ── Play demo (simulated messages) ───────────────────── */
 
-  function playDemo() {
+  async function playDemo() {
     reset();
     setLocationText(
       sc === "siren" ? "Chelsea, NY 10011" : "NYU Langone — Lobby",
@@ -366,6 +446,23 @@ export default function DemoScreen({
 
     if (sc === "siren") setRadarActive(true);
 
+    if (connected) {
+      // Trigger server-side demo — events come back via WebSocket
+      const scenario = sc === "siren" ? "siren" : "name";
+      try {
+        await fetch(`http://localhost:8001/demo/${scenario}`, {
+          method: "POST",
+        });
+      } catch {
+        // Server unreachable, fall through to client-side sim
+        runClientSim();
+      }
+    } else {
+      runClientSim();
+    }
+  }
+
+  function runClientSim() {
     const sim = sc === "siren" ? SIREN_SIM : HOSPITAL_SIM;
     const newTimers = sim.map(({ delay, msg }) =>
       setTimeout(() => handleMessage(msg), delay),
@@ -438,11 +535,13 @@ export default function DemoScreen({
               background: connected ? "#1D9E75" : "#886622",
             }}
           />
-          {connected
-            ? capturing
-              ? "Listening..."
-              : "Connected"
-            : "Offline — demo mode"}
+          {micError
+            ? "Mic denied — demo mode"
+            : connected
+              ? capturing
+                ? "Listening..."
+                : "Connected"
+              : "Offline — demo mode"}
         </div>
       </div>
 
@@ -464,7 +563,7 @@ export default function DemoScreen({
           </div>
         </div>
         <div style={styles.panelWrap}>
-          <AgentPanel steps={steps} elapsed={elapsed} />
+          <AgentPanel steps={steps} elapsed={elapsed} thoughts={thoughts} />
           <div style={styles.labelTag}>Agent reasoning — ADK pipeline</div>
         </div>
       </div>

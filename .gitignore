@@ -20,6 +20,8 @@ npm-debug.log*
 .env.test.local
 .env.production.local
 !.env.example
+ai-service/.venv/
+ai-service/__pycache__/
 
 # misc
 .DS_Store
