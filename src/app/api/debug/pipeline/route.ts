@@ -1,22 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runAgentPipeline } from "@/server/agents/pipeline";
+import { runAgentPipeline, runListenPipeline } from "@/server/agents/pipeline";
+import { listenFixtures } from "@/server/agents/listen-fixtures";
 import { pipelineFixtures } from "@/server/agents/pipeline-fixtures";
-import type { AudioObservation, RawContextInput } from "@/types/live-agent";
+import type {
+  AudioObservation,
+  ListenAdapterInput,
+  RawContextInput,
+} from "@/types/live-agent";
 
 export function GET() {
   return NextResponse.json({
     ok: true,
     fixtures: {
-      emergencyVehicle: runAgentPipeline(
-        pipelineFixtures.emergencyVehicle.observation,
+      emergencyVehicle: runListenPipeline(
+        listenFixtures.emergencyVehicle,
         pipelineFixtures.emergencyVehicle.rawContext,
       ),
-      hospitalPa: runAgentPipeline(
-        pipelineFixtures.hospitalPa.observation,
+      hospitalPa: runListenPipeline(
+        listenFixtures.hospitalPa,
         pipelineFixtures.hospitalPa.rawContext,
       ),
-      ambientRoutine: runAgentPipeline(
-        pipelineFixtures.ambientRoutine.observation,
+      ambientRoutine: runListenPipeline(
+        listenFixtures.homeAwareness,
         pipelineFixtures.ambientRoutine.rawContext,
       ),
     },
@@ -26,14 +31,32 @@ export function GET() {
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as {
     observation?: AudioObservation;
+    listenInput?: ListenAdapterInput;
     rawContext?: RawContextInput;
   };
 
-  if (!body.observation || !body.rawContext) {
+  if (!body.rawContext) {
     return NextResponse.json(
       {
         ok: false,
-        error: "observation and rawContext are required.",
+        error: "rawContext is required.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (body.listenInput) {
+    return NextResponse.json({
+      ok: true,
+      result: runListenPipeline(body.listenInput, body.rawContext),
+    });
+  }
+
+  if (!body.observation) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "observation or listenInput is required.",
       },
       { status: 400 },
     );

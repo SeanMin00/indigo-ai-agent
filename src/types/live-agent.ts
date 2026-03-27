@@ -42,6 +42,14 @@ export type AudioObservation = {
   source: "microphone" | "stream" | "simulation";
 };
 
+export type ListenAdapterInput = {
+  transcript: string;
+  source: AudioObservation["source"];
+  hintSignal?: SignalLabel;
+  confidenceHint?: number;
+  capturedAtIso?: string;
+};
+
 export type DispatchDecision = {
   category: SignalCategory;
   signal: SignalLabel;
@@ -123,6 +131,7 @@ export type ExecutorDecision = {
 export type AgentPipelineResult = {
   rawContext: RawContextInput;
   context: ContextSnapshot;
+  listenInput?: ListenAdapterInput;
   observation: AudioObservation;
   dispatch: DispatchDecision;
   architect: ArchitectDecision;
