@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const setupCards = [
   {
     title: "Application",
@@ -36,6 +38,11 @@ export default function HomePage() {
           project connection, authentication, and the first real-time AI
           interaction loop for deaf and hard-of-hearing users.
         </p>
+        <div className="hero-actions">
+          <Link className="hero-link" href="/demo">
+            Open Step 10 demo surface
+          </Link>
+        </div>
       </section>
 
       <section className="grid" aria-label="Setup overview">
