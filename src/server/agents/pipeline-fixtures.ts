@@ -4,22 +4,22 @@ import {
   hospitalPaContextInputFixture,
 } from "@/server/agents/context-fixtures";
 import {
-  ambientNoiseObservationFixture,
-  emergencyVehicleObservationFixture,
-  hospitalPaObservationFixture,
+  ambientNoiseFixture,
+  emergencyVehicleFixture,
+  hospitalPaFixture,
 } from "@/server/agents/dispatch-fixtures";
 
 export const pipelineFixtures = {
   emergencyVehicle: {
-    observation: emergencyVehicleObservationFixture,
+    observation: emergencyVehicleFixture,
     rawContext: emergencyVehicleContextInputFixture,
   },
   hospitalPa: {
-    observation: hospitalPaObservationFixture,
+    observation: hospitalPaFixture,
     rawContext: hospitalPaContextInputFixture,
   },
   ambientRoutine: {
-    observation: ambientNoiseObservationFixture,
+    observation: ambientNoiseFixture,
     rawContext: homeAwarenessContextInputFixture,
   },
 };

@@ -13,6 +13,7 @@ function buildEmergencyDecision(
     : "";
 
   return {
+    mode: "emergency",
     severity: decision.signal === "fire_alarm" ? "critical" : "high",
     title:
       decision.signal === "fire_alarm"
@@ -40,6 +41,7 @@ function buildInfoDecision(
     : "";
 
   return {
+    mode: "info",
     severity: "medium",
     title: "Important announcement",
     userMessage: `Important announcement detected${environmentHint}. Check the summary and directions.`,
@@ -55,6 +57,7 @@ function buildInfoDecision(
 
 function buildRoutineDecision(): ArchitectDecision {
   return {
+    mode: "awareness",
     severity: "low",
     title: "Routine sound",
     userMessage: "Routine environmental sound detected.",

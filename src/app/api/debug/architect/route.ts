@@ -40,6 +40,6 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    architect: architectDispatchDecision(body.decision, body.context ?? {}),
+    architect: architectDispatchDecision(body.decision, body.context ?? { userSituation: "unknown" }),
   });
 }
