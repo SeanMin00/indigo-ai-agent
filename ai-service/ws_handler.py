@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
+import struct
 import time
+import wave
 from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
-from google.adk.agents import LiveRequestQueue
-from google.genai import types
 
 log = logging.getLogger("myindigo")
+
+SAMPLE_RATE = 16000
+CLASSIFY_INTERVAL = 3  # seconds between classification calls
 
 
 @dataclass
@@ -21,7 +25,7 @@ class ClientSession:
     user_name: str = ""
     user_id: str = ""
     start_time: float = 0.0
-    live_queue: LiveRequestQueue = field(default_factory=LiveRequestQueue)
+    audio_buffer: bytearray = field(default_factory=bytearray)
     _chunk_count: int = 0
 
     async def send_event(self, event: dict[str, Any]) -> None:
@@ -61,6 +65,21 @@ class ClientSession:
             "risk": risk,
         })
 
+    def take_audio(self) -> bytes:
+        """Take accumulated audio and clear the buffer. Returns WAV bytes."""
+        if not self.audio_buffer:
+            return b""
+        pcm = bytes(self.audio_buffer)
+        self.audio_buffer.clear()
+        # Wrap PCM in WAV header
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(pcm)
+        return buf.getvalue()
+
 
 async def handle_ws_connection(ws: WebSocket) -> ClientSession:
     """Accept WebSocket, wait for init message, return ClientSession."""
@@ -87,7 +106,7 @@ async def handle_ws_connection(ws: WebSocket) -> ClientSession:
 
 
 async def read_audio_loop(session: ClientSession) -> None:
-    """Read audio_chunk messages from browser and feed into LiveRequestQueue."""
+    """Read audio_chunk messages from browser and accumulate PCM bytes."""
     log.info("🎙 Audio read loop started")
     try:
         while True:
@@ -96,45 +115,13 @@ async def read_audio_loop(session: ClientSession) -> None:
             if msg.get("type") == "audio_chunk":
                 audio_bytes = base64.b64decode(msg["data"])
                 session._chunk_count += 1
-                # Feed audio into ADK LiveRequestQueue
-                blob = types.Blob(
-                    data=audio_bytes,
-                    mimeType="audio/pcm;rate=16000",
-                )
-                session.live_queue.send_realtime(blob)
-                if session._chunk_count % 10 == 1:
+                session.audio_buffer.extend(audio_bytes)
+                if session._chunk_count % 20 == 1:
                     log.debug(
-                        "🎙 Audio chunk #%d | %d bytes",
+                        "🎙 Audio chunk #%d | %d bytes | buffer=%d",
                         session._chunk_count,
                         len(audio_bytes),
+                        len(session.audio_buffer),
                     )
     except WebSocketDisconnect:
         log.info("🎙 Audio loop ended — client disconnected (chunks=%d)", session._chunk_count)
-        session.live_queue.close()
-
-
-async def prompt_loop(session: ClientSession) -> None:
-    """Periodically prompt the model to analyze what it hears.
-
-    Gemini Live VAD only responds to speech. For environmental sounds
-    (sirens, horns) we send a text nudge every few seconds so the model
-    actually processes the audio buffer and tells us what it heard.
-    """
-    log.info("💬 Prompt loop started")
-    prompt = types.Content(
-        role="user",
-        parts=[types.Part(text=(
-            f"Analyze the audio you are receiving right now. "
-            f"The user's registered name is {session.user_name}. "
-            f"If you hear a siren, horn, or emergency vehicle, say so immediately and delegate. "
-            f"If you hear a PA announcement mentioning the name '{session.user_name}', say so and delegate. "
-            f"If you hear only silence or background noise, reply with just: AMBIENT"
-        ))],
-    )
-    try:
-        while True:
-            await asyncio.sleep(3)
-            log.debug("💬 Sending analysis prompt")
-            session.live_queue.send_content(prompt)
-    except asyncio.CancelledError:
-        log.info("💬 Prompt loop cancelled")

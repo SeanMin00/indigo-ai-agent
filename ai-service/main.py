@@ -3,18 +3,24 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 import sys
+import time
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types as genai_types
+
+from agents.vehicle_sound_agent import vehicle_sound_agent
+from agents.name_detection_agent import name_detection_agent
+from ws_handler import handle_ws_connection, read_audio_loop, ClientSession, CLASSIFY_INTERVAL
+from demo import run_demo, SCENARIOS
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
-
-from agents import root_agent
-from ws_handler import handle_ws_connection, read_audio_loop, prompt_loop, ClientSession
-from demo import run_demo, SCENARIOS
 
 load_dotenv()
 
@@ -27,15 +33,20 @@ logging.basicConfig(
 )
 log = logging.getLogger("myindigo")
 
-# Quiet noisy libraries
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("google").setLevel(logging.INFO)
+logging.getLogger("google").setLevel(logging.WARNING)
+
+# ── Gemini client for audio classification ───────────────
+api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+gemini_client = genai.Client(api_key=api_key)
+CLASSIFY_MODEL = "gemini-2.5-flash"
 
 log.info("=" * 60)
 log.info("  myIndigo AI Service starting")
-log.info("  Agent: %s → sub_agents: %s", root_agent.name, [a.name for a in root_agent.sub_agents])
+log.info("  Classification model: %s", CLASSIFY_MODEL)
+log.info("  Classify interval: %ds", CLASSIFY_INTERVAL)
 log.info("=" * 60)
 
 # ── FastAPI app ──────────────────────────────────────────
@@ -49,11 +60,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ADK runners for sub-agents (text-based, non-live)
 session_service = InMemorySessionService()
 
-runner = Runner(
-    agent=root_agent,
-    app_name="myindigo",
+vehicle_runner = Runner(
+    agent=vehicle_sound_agent,
+    app_name="myindigo_vehicle",
+    session_service=session_service,
+)
+name_runner = Runner(
+    agent=name_detection_agent,
+    app_name="myindigo_name",
     session_service=session_service,
 )
 
@@ -63,7 +80,6 @@ active_sessions: dict[str, ClientSession] = {}
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    log.debug("/health called")
     return {"status": "ok", "service": "myindigo-ai-service"}
 
 
@@ -73,128 +89,182 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     active_sessions[client.user_id] = client
     log.info("Active sessions: %d", len(active_sessions))
 
+    audio_task = asyncio.create_task(read_audio_loop(client))
+    classify_task = asyncio.create_task(classify_loop(client))
+
+    await client.send_agent_update(
+        "dispatch", "active", "DispatchAgent listening — Gemini audio classification"
+    )
+
     try:
-        # Create ADK session with user context
-        log.info("Creating ADK session for user=%s...", client.user_name)
-        adk_session = await session_service.create_session(
-            app_name="myindigo",
-            user_id=client.user_id,
-            state={"user_name": client.user_name},
-        )
-        log.info("✓ ADK session created: %s", adk_session.id)
-
-        # Notify frontend: dispatch is listening
-        await client.send_agent_update(
-            "dispatch", "active", "DispatchAgent listening — Gemini Live connected"
-        )
-
-        # Start reading browser audio in background
-        audio_task = asyncio.create_task(read_audio_loop(client))
-        log.info("🎙 Audio read loop launched")
-
-        # Periodically prompt model to analyze audio (VAD won't trigger on non-speech)
-        prompt_task = asyncio.create_task(prompt_loop(client))
-        log.info("💬 Prompt loop launched")
-
-        try:
-            # Run ADK live session with audio streaming
-            log.info("🚀 Starting runner.run_live()...")
-            live_events = runner.run_live(
-                session=adk_session,
-                live_request_queue=client.live_queue,
-            )
-
-            event_count = 0
-            async for event in live_events:
-                event_count += 1
-                log.info(
-                    "📨 ADK event #%d | author=%s | type=%s",
-                    event_count,
-                    getattr(event, "author", "?"),
-                    type(event).__name__,
-                )
-                await process_adk_event(client, event)
-
-            log.info("ADK live stream ended after %d events", event_count)
-
-        except Exception as e:
-            log.error("❌ ADK session error: %s: %s", type(e).__name__, e, exc_info=True)
-            # Fall back gracefully — WebSocket stays open for demo mode
-            await client.send_agent_update(
-                "dispatch", "active",
-                f"DispatchAgent listening — demo mode (ADK: {type(e).__name__})"
-            )
-            log.info("↩ Falling back to demo mode, keeping connection alive")
-            # Keep connection alive for demo triggers
-            try:
-                while True:
-                    await asyncio.sleep(1)
-            except asyncio.CancelledError:
-                pass
-        finally:
-            audio_task.cancel()
-            prompt_task.cancel()
-            client.live_queue.close()
-
+        # Keep alive until audio_task ends (client disconnect)
+        await audio_task
     except Exception as e:
-        log.error("❌ WebSocket error: %s: %s", type(e).__name__, e, exc_info=True)
+        log.error("❌ WS error: %s", e)
     finally:
+        classify_task.cancel()
         active_sessions.pop(client.user_id, None)
         log.info("🔌 Client disconnected. Active sessions: %d", len(active_sessions))
 
 
-async def process_adk_event(client: ClientSession, event: object) -> None:
-    """Parse ADK event and broadcast appropriate WebSocket messages."""
-    author = getattr(event, "author", "")
-    content = getattr(event, "content", None)
+# ── Audio classification loop ────────────────────────────
 
-    if not content or not hasattr(content, "parts"):
-        log.debug("  (skipped event — no content.parts)")
-        return
+DEBOUNCE_SECS = 8
+_last_dispatch: dict[str, float] = {}
 
-    text = ""
-    for part in content.parts:
-        # Text from regular responses or sub-agent delegation
-        if hasattr(part, "text") and part.text:
-            text += part.text
-        # Text from audio transcription (native-audio model sends these)
-        if hasattr(part, "transcript") and part.transcript:
-            text += part.transcript
 
-    if not text.strip():
-        log.debug("  (skipped event — empty text)")
-        return
+async def classify_loop(client: ClientSession) -> None:
+    """Every N seconds, take the audio buffer and classify it with Gemini."""
+    log.info("🔊 Classify loop started (interval=%ds)", CLASSIFY_INTERVAL)
+    try:
+        await asyncio.sleep(CLASSIFY_INTERVAL)
+        while True:
+            wav_bytes = client.take_audio()
+            if wav_bytes and len(wav_bytes) > 100:
+                asyncio.create_task(classify_audio(client, wav_bytes))
+            await asyncio.sleep(CLASSIFY_INTERVAL)
+    except asyncio.CancelledError:
+        log.info("🔊 Classify loop cancelled")
 
-    clean = text.strip()
-    log.info("🤖 [%s] %s", author, clean[:150])
 
-    # Skip ambient/silence responses
-    if clean.upper() == "AMBIENT" or clean.upper().startswith("AMBIENT"):
-        log.debug("  (ambient — no alert)")
-        return
+async def classify_audio(client: ClientSession, wav_bytes: bytes) -> None:
+    """Send audio to Gemini and classify as SIREN, SPEECH, or AMBIENT."""
+    try:
+        log.info("🔊 Classifying %d bytes of audio...", len(wav_bytes))
 
-    # Route based on which agent produced the event
-    if author == "dispatch_agent":
-        if any(kw in text.lower() for kw in ["siren", "horn", "crash", "emergency", "vehicle"]):
-            log.info("  → Dispatch classified: EMERGENCY SOUND")
-            await client.send_sound_detected(text.strip())
-            await client.send_agent_update("dispatch", "done", text.strip())
-        elif any(kw in text.lower() for kw in ["announcement", "name", "paging", "called"]):
-            log.info("  → Dispatch classified: NAME/ANNOUNCEMENT")
-            await client.send_sound_detected(text.strip())
-            await client.send_agent_update("dispatch", "done", text.strip())
+        response = await gemini_client.aio.models.generate_content(
+            model=CLASSIFY_MODEL,
+            contents=[
+                genai_types.Content(
+                    role="user",
+                    parts=[
+                        genai_types.Part(
+                            inline_data=genai_types.Blob(
+                                data=wav_bytes,
+                                mimeType="audio/wav",
+                            )
+                        ),
+                        genai_types.Part(
+                            text=(
+                                "Classify this audio into exactly ONE category. "
+                                "Reply with ONLY the category name, nothing else:\n"
+                                "SIREN - if you hear a siren, horn, alarm, or emergency vehicle\n"
+                                "SPEECH - if you hear human speech or a PA announcement\n"
+                                "AMBIENT - if you hear silence, background noise, or nothing notable"
+                            )
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        result = response.text.strip().upper() if response.text else "AMBIENT"
+        log.info("🔊 Classification result: %s", result)
+
+        now = time.time()
+
+        if "SIREN" in result:
+            if now - _last_dispatch.get("siren", 0) < DEBOUNCE_SECS:
+                log.debug("  (siren debounced)")
+                return
+            _last_dispatch["siren"] = now
+
+            log.info("🚨 SIREN detected — calling VehicleSoundAgent")
+            await client.send_sound_detected("Siren/emergency sound detected")
+            await client.send_agent_update(
+                "dispatch", "done", "Emergency sound classified — delegating to VehicleSoundAgent"
+            )
+            await call_vehicle_agent(client)
+
+        elif "SPEECH" in result:
+            if now - _last_dispatch.get("speech", 0) < DEBOUNCE_SECS:
+                log.debug("  (speech debounced)")
+                return
+            _last_dispatch["speech"] = now
+
+            log.info("📢 SPEECH detected — calling NameDetectionAgent")
+            # Get transcript of the speech
+            transcript = await transcribe_audio(wav_bytes)
+            await client.send_sound_detected(f"Speech detected: {transcript}")
+            await client.send_agent_update(
+                "dispatch", "done", "Speech classified — delegating to NameDetectionAgent"
+            )
+            await call_name_agent(client, transcript)
+
         else:
-            log.info("  → Dispatch: generic output")
-            await client.send_agent_update("dispatch", "active", text.strip())
+            log.debug("  ambient — no action")
+            # Reset dispatch agent to listening state
+            await client.send_agent_update(
+                "dispatch", "active", "DispatchAgent listening — Gemini audio classification"
+            )
 
-    elif author == "vehicle_sound_agent":
-        log.info("  → VehicleSoundAgent responding")
-        await client.send_agent_update("vehicle", "active", "VehicleSoundAgent analyzing...")
+    except Exception as e:
+        log.error("❌ Classification error: %s: %s", type(e).__name__, e)
+
+
+async def transcribe_audio(wav_bytes: bytes) -> str:
+    """Transcribe audio using Gemini."""
+    try:
+        response = await gemini_client.aio.models.generate_content(
+            model=CLASSIFY_MODEL,
+            contents=[
+                genai_types.Content(
+                    role="user",
+                    parts=[
+                        genai_types.Part(
+                            inline_data=genai_types.Blob(
+                                data=wav_bytes,
+                                mimeType="audio/wav",
+                            )
+                        ),
+                        genai_types.Part(text="Transcribe this audio. Return only the transcript text."),
+                    ],
+                )
+            ],
+        )
+        return response.text.strip() if response.text else "(inaudible)"
+    except Exception as e:
+        log.error("❌ Transcription error: %s", e)
+        return "(transcription failed)"
+
+
+# ── Sub-agent calls ──────────────────────────────────────
+
+async def call_vehicle_agent(client: ClientSession) -> None:
+    """Call VehicleSoundAgent via ADK."""
+    log.info("🚒 Calling VehicleSoundAgent")
+    await client.send_agent_update("vehicle", "active", "VehicleSoundAgent analyzing...")
+
+    try:
+        sub_session = await session_service.create_session(
+            app_name="myindigo_vehicle",
+            user_id=client.user_id,
+        )
+        content = genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(text=(
+                "An emergency vehicle siren/horn was detected near the user. "
+                "The user is a pedestrian. Classify the sound and assess risk."
+            ))],
+        )
+        text = ""
+        async for event in vehicle_runner.run_async(
+            session_id=sub_session.id,
+            user_id=client.user_id,
+            new_message=content,
+        ):
+            ec = getattr(event, "content", None)
+            if ec and hasattr(ec, "parts"):
+                for p in ec.parts:
+                    if hasattr(p, "text") and p.text:
+                        text += p.text
+
+        log.info("🚒 VehicleSoundAgent: %s", text[:150])
         try:
             data = json.loads(text.strip())
-            log.info("  → Vehicle JSON: risk=%s title=%s", data.get("risk"), data.get("title"))
             await client.send_agent_update(
-                "vehicle", "done", f"Risk: {data.get('risk', 'UNKNOWN')}"
+                "vehicle", "done",
+                f"Risk: {data.get('risk', 'HIGH')} — {data.get('vehicle_type', 'emergency')}"
             )
             await client.send_alert(
                 scenario="siren",
@@ -203,15 +273,51 @@ async def process_adk_event(client: ClientSession, event: object) -> None:
                 risk=data.get("risk", "HIGH"),
             )
         except json.JSONDecodeError:
-            log.warning("  → Vehicle output not JSON: %s", text.strip()[:80])
-            await client.send_agent_update("vehicle", "done", text.strip())
+            await client.send_agent_update("vehicle", "done", text.strip()[:100] or "Analyzed")
+            await client.send_alert(
+                scenario="siren",
+                title="Emergency sound detected",
+                subtitle="Check your surroundings",
+                risk="HIGH",
+            )
+    except Exception as e:
+        log.error("❌ VehicleSoundAgent error: %s", e)
+        await client.send_agent_update("vehicle", "done", f"Error: {e}")
 
-    elif author == "name_detection_agent":
-        log.info("  → NameDetectionAgent responding")
-        await client.send_agent_update("name", "active", "NameDetectionAgent checking...")
+
+async def call_name_agent(client: ClientSession, transcript: str) -> None:
+    """Call NameDetectionAgent via ADK."""
+    log.info("📢 Calling NameDetectionAgent: %s", transcript[:80])
+    await client.send_agent_update("name", "active", "NameDetectionAgent checking...")
+
+    try:
+        sub_session = await session_service.create_session(
+            app_name="myindigo_name",
+            user_id=client.user_id,
+        )
+        content = genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(text=(
+                f'Transcript of PA announcement: "{transcript}"\n'
+                f"User's registered name: {client.user_name}\n"
+                f"Was the user's name mentioned? Respond with JSON only."
+            ))],
+        )
+        text = ""
+        async for event in name_runner.run_async(
+            session_id=sub_session.id,
+            user_id=client.user_id,
+            new_message=content,
+        ):
+            ec = getattr(event, "content", None)
+            if ec and hasattr(ec, "parts"):
+                for p in ec.parts:
+                    if hasattr(p, "text") and p.text:
+                        text += p.text
+
+        log.info("📢 NameDetectionAgent: %s", text[:150])
         try:
             data = json.loads(text.strip())
-            log.info("  → Name JSON: found=%s detail=%s", data.get("name_found"), data.get("location_detail"))
             if data.get("name_found"):
                 await client.send_agent_update(
                     "name", "done",
@@ -226,26 +332,21 @@ async def process_adk_event(client: ClientSession, event: object) -> None:
             else:
                 await client.send_agent_update("name", "done", "Not for you — resuming")
         except json.JSONDecodeError:
-            log.warning("  → Name output not JSON: %s", text.strip()[:80])
-            await client.send_agent_update("name", "done", text.strip())
+            await client.send_agent_update("name", "done", text.strip()[:100] or "Checked")
+    except Exception as e:
+        log.error("❌ NameDetectionAgent error: %s", e)
+        await client.send_agent_update("name", "done", f"Error: {e}")
 
-    else:
-        log.info("  → Unknown agent author: %s", author)
 
+# ── Demo trigger ─────────────────────────────────────────
 
 @app.post("/demo/{scenario}")
 async def trigger_demo(scenario: str) -> dict[str, str]:
-    """Trigger a simulated demo sequence for all connected clients."""
     log.info("🎬 Demo triggered: scenario=%s, clients=%d", scenario, len(active_sessions))
-
     if scenario not in SCENARIOS:
         return {"error": f"Unknown scenario: {scenario}. Use: {list(SCENARIOS.keys())}"}
-
     tasks = [run_demo(session, scenario) for session in active_sessions.values()]
     if tasks:
         await asyncio.gather(*tasks)
-        log.info("✓ Demo complete: %s", scenario)
         return {"ok": "true", "scenario": scenario}
-
-    log.warning("✗ No connected clients for demo")
     return {"error": "No connected clients"}
