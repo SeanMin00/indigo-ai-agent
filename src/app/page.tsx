@@ -1,55 +1,71 @@
-const setupCards = [
-  {
-    title: "Application",
-    items: [
-      "Next.js App Router scaffold",
-      "TypeScript, ESLint, and Prettier",
-      "Health-check API route",
-    ],
-  },
-  {
-    title: "Data Layer",
-    items: [
-      "Prisma schema for sessions, transcripts, summaries, and alerts",
-      "Supabase-ready PostgreSQL environment variables",
-      "Shared Prisma client helper",
-    ],
-  },
-  {
-    title: "Collaboration",
-    items: [
-      "GitHub issue and PR templates",
-      "Node version pinning",
-      "CI workflow for lint and typecheck",
-    ],
-  },
-];
+"use client";
+
+import { useState, useEffect } from "react";
+import supabaseClient from "@/lib/supabaseClient";
+import AuthScreen from "@/components/AuthScreen";
+import DemoScreen from "@/components/DemoScreen";
+import type { User } from "@supabase/supabase-js";
 
 export default function HomePage() {
-  return (
-    <main>
-      <section className="hero">
-        <span className="pill">Build With AI Hackathon Starter</span>
-        <h1>Base scaffold for an accessibility-focused AI agent.</h1>
-        <p>
-          This repo is ready for the next layer of work: user flows, Supabase
-          project connection, authentication, and the first real-time AI
-          interaction loop for deaf and hard-of-hearing users.
-        </p>
-      </section>
+  const [user, setUser] = useState<User | null>(null);
+  const [userName, setUserName] = useState("");
+  const [loading, setLoading] = useState(true);
 
-      <section className="grid" aria-label="Setup overview">
-        {setupCards.map((card) => (
-          <article className="card" key={card.title}>
-            <h2>{card.title}</h2>
-            <ul>
-              {card.items.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </article>
-        ))}
-      </section>
-    </main>
+  useEffect(() => {
+    supabaseClient.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser(session.user);
+        supabaseClient
+          .from("profiles")
+          .select("registered_name")
+          .eq("id", session.user.id)
+          .single()
+          .then(({ data }) => {
+            setUserName((data?.registered_name as string) ?? "User");
+            setLoading(false);
+          });
+      } else {
+        setLoading(false);
+      }
+    });
+  }, []);
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0a0a0a",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#555",
+        }}
+      >
+        Loading...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <AuthScreen
+        onSuccess={(u, name) => {
+          setUser(u);
+          setUserName(name);
+        }}
+      />
+    );
+  }
+
+  return (
+    <DemoScreen
+      userName={userName}
+      onLogout={async () => {
+        await supabaseClient.auth.signOut();
+        setUser(null);
+        setUserName("");
+      }}
+    />
   );
 }

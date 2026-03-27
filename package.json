@@ -24,7 +24,7 @@
   "dependencies": {
     "@prisma/client": "latest",
     "@supabase/ssr": "latest",
-    "@supabase/supabase-js": "latest",
+    "@supabase/supabase-js": "^2.100.1",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest"
