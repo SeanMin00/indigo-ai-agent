@@ -1,23 +1,45 @@
+export type SignalCategory = "emergency" | "info" | "routine" | "unknown";
+
 export type SignalLabel =
   | "fire_alarm"
   | "emergency_vehicle_siren"
+  | "crash"
+  | "doorbell"
+  | "baby_crying"
   | "hospital_pa"
   | "airport_pa"
+  | "subway_pa"
   | "name_called"
-  | "doorbell"
   | "conversation"
-  | "ambient_noise";
+  | "ambient_noise"
+  | "unknown";
 
-export type SignalCategory = "emergency" | "info" | "routine" | "unknown";
+export type UserSituation =
+  | "unknown"
+  | "on_foot"
+  | "driving"
+  | "indoors"
+  | "waiting_room"
+  | "transit";
 
-export type AudioSource = "simulation" | "microphone" | "upload";
+export type AgentCapability = {
+  id: "dispatch" | "architect" | "context" | "executor" | "auditor";
+  purpose: string;
+  sourceMaterial: string;
+};
+
+export type AgentBlueprint = {
+  id: "listen" | "dispatch" | "architect" | "context" | "executor" | "auditor";
+  label: string;
+  owns: string[];
+};
 
 export type AudioObservation = {
   transcript: string;
   detectedSignal: SignalLabel;
   confidence: number;
   timestampIso: string;
-  source: AudioSource;
+  source: "microphone" | "stream" | "simulation";
 };
 
 export type DispatchDecision = {
@@ -28,25 +50,74 @@ export type DispatchDecision = {
   reasoning: string;
 };
 
-export type ArchitectSeverity = "low" | "medium" | "high" | "critical";
-
-export type WearableSignal =
-  | "strong-vibration"
-  | "standard-vibration"
-  | "visual-only";
-
-export type EscalationMode = "notify-now" | "surface-now" | "log-only";
-
 export type ContextSnapshot = {
+  scenarioLabel?: string;
   locationLabel?: string;
   environmentLabel?: string;
+  timeLabel?: string;
+  weatherLabel?: string;
+  userSituation: UserSituation;
+  notes?: string[];
+  personalization?: {
+    priorityTuning?: "raise" | "lower" | "none";
+    preferredWearableSignal?:
+      | "strong-vibration"
+      | "standard-vibration"
+      | "visual-only";
+    mutedSignals?: SignalLabel[];
+  };
 };
 
+export type RawContextInput = {
+  scenarioHint?: "emergency_vehicle" | "hospital_pa" | "airport_pa" | "home";
+  city?: string;
+  neighborhood?: string;
+  venueType?: "street" | "hospital" | "airport" | "subway" | "home" | "unknown";
+  userSituationHint?: UserSituation;
+  timeHint?: "morning" | "afternoon" | "evening" | "night";
+  weatherHint?: "clear" | "rain" | "snow" | "unknown";
+  latitude?: number;
+  longitude?: number;
+  notes?: string[];
+  personalization?: ContextSnapshot["personalization"];
+};
+
+export type ArchitectMode =
+  | "emergency"
+  | "info"
+  | "awareness"
+  | "personalization";
+
 export type ArchitectDecision = {
-  severity: ArchitectSeverity;
+  mode: ArchitectMode;
+  severity: "critical" | "high" | "medium" | "low";
   title: string;
   userMessage: string;
   recommendedActions: string[];
-  wearableSignal: WearableSignal;
-  escalation: EscalationMode;
+  wearableSignal: "strong-vibration" | "standard-vibration" | "visual-only";
+  escalation: "notify-now" | "surface-now" | "log-only";
+};
+
+export type AgentPipelineResult = {
+  rawContext: RawContextInput;
+  context: ContextSnapshot;
+  observation: AudioObservation;
+  dispatch: DispatchDecision;
+  architect: ArchitectDecision;
+  trace: Array<"context" | "listen" | "dispatch" | "architect">;
+};
+
+export type LiveAgentBlueprint = {
+  category: "live-agent";
+  primaryGoal: string;
+  capabilities: AgentCapability[];
+  agents: AgentBlueprint[];
+  classifications: SignalCategory[];
+  activePipeline: string[];
+  demoScenarios: string[];
+  transport: {
+    audioInput: boolean;
+    textFallback: boolean;
+    videoInput: boolean;
+  };
 };
