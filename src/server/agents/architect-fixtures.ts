@@ -29,11 +29,16 @@ export const emergencyContextFixture: ContextSnapshot = {
   locationLabel: "main intersection",
   environmentLabel: "street",
   userSituation: "on_foot",
-  userSituation: "on_foot",
 };
 
 export const infoContextFixture: ContextSnapshot = {
   locationLabel: "outpatient desk",
   environmentLabel: "hospital lobby",
   userSituation: "waiting_room",
+};
+
+export const awarenessContextFixture: ContextSnapshot = {
+  locationLabel: "living room",
+  environmentLabel: "home",
+  userSituation: "indoors",
 };
