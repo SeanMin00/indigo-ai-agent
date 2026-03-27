@@ -13,7 +13,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
 from agents import root_agent
-from ws_handler import handle_ws_connection, read_audio_loop, ClientSession
+from ws_handler import handle_ws_connection, read_audio_loop, prompt_loop, ClientSession
 from demo import run_demo, SCENARIOS
 
 load_dotenv()
@@ -92,9 +92,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         audio_task = asyncio.create_task(read_audio_loop(client))
         log.info("🎙 Audio read loop launched")
 
+        # Periodically prompt model to analyze audio (VAD won't trigger on non-speech)
+        prompt_task = asyncio.create_task(prompt_loop(client))
+        log.info("💬 Prompt loop launched")
+
         try:
             # Run ADK live session with audio streaming
-            # Default RunConfig uses AUDIO modality + transcription (required by native-audio model)
             log.info("🚀 Starting runner.run_live()...")
             live_events = runner.run_live(
                 session=adk_session,
@@ -130,6 +133,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 pass
         finally:
             audio_task.cancel()
+            prompt_task.cancel()
             client.live_queue.close()
 
     except Exception as e:
@@ -161,7 +165,13 @@ async def process_adk_event(client: ClientSession, event: object) -> None:
         log.debug("  (skipped event — empty text)")
         return
 
-    log.info("🤖 [%s] %s", author, text.strip()[:150])
+    clean = text.strip()
+    log.info("🤖 [%s] %s", author, clean[:150])
+
+    # Skip ambient/silence responses
+    if clean.upper() == "AMBIENT" or clean.upper().startswith("AMBIENT"):
+        log.debug("  (ambient — no alert)")
+        return
 
     # Route based on which agent produced the event
     if author == "dispatch_agent":

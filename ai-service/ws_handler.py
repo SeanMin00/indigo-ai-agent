@@ -96,7 +96,7 @@ async def read_audio_loop(session: ClientSession) -> None:
             if msg.get("type") == "audio_chunk":
                 audio_bytes = base64.b64decode(msg["data"])
                 session._chunk_count += 1
-                # Feed audio into ADK LiveRequestQueue as PCM blob
+                # Feed audio into ADK LiveRequestQueue
                 blob = types.Blob(
                     data=audio_bytes,
                     mimeType="audio/pcm;rate=16000",
@@ -111,3 +111,30 @@ async def read_audio_loop(session: ClientSession) -> None:
     except WebSocketDisconnect:
         log.info("🎙 Audio loop ended — client disconnected (chunks=%d)", session._chunk_count)
         session.live_queue.close()
+
+
+async def prompt_loop(session: ClientSession) -> None:
+    """Periodically prompt the model to analyze what it hears.
+
+    Gemini Live VAD only responds to speech. For environmental sounds
+    (sirens, horns) we send a text nudge every few seconds so the model
+    actually processes the audio buffer and tells us what it heard.
+    """
+    log.info("💬 Prompt loop started")
+    prompt = types.Content(
+        role="user",
+        parts=[types.Part(text=(
+            f"Analyze the audio you are receiving right now. "
+            f"The user's registered name is {session.user_name}. "
+            f"If you hear a siren, horn, or emergency vehicle, say so immediately and delegate. "
+            f"If you hear a PA announcement mentioning the name '{session.user_name}', say so and delegate. "
+            f"If you hear only silence or background noise, reply with just: AMBIENT"
+        ))],
+    )
+    try:
+        while True:
+            await asyncio.sleep(3)
+            log.debug("💬 Sending analysis prompt")
+            session.live_queue.send_content(prompt)
+    except asyncio.CancelledError:
+        log.info("💬 Prompt loop cancelled")
