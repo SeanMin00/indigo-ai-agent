@@ -6,6 +6,11 @@ Real-time audio awareness agent for deaf and hard-of-hearing users, built with G
 
 [Pitch Deck (Figma)](https://www.figma.com/deck/ebsg6XMvEQVfHLcYQmva4Z/myIndigo_Google?node-id=1-133&viewport=-124%2C-31%2C0.59&t=TTdyLd0Ns68gQfd3-1&scaling=min-zoom&content-scaling=fixed&page-id=0%3A1) | [Demo Video](https://drive.google.com/file/d/1Ic5Nt25LI1L3mll7LpblyA9hC5c_LEzM/view?usp=sharing)
 
+
+https://github.com/user-attachments/assets/8fdd6db3-53e5-49bb-867b-2c168e5ad402
+
+
+
 ## What it does
 
 myIndigo listens to the world for you. It uses your phone's microphone to detect critical sounds and instantly alerts you on your phone and Apple Watch with clear, actionable instructions.
