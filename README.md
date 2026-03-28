@@ -16,7 +16,10 @@ myIndigo listens to the world for you. It uses your phone's microphone to detect
 **Two scenarios:**
 
 - **Emergency sirens** — Detects fire trucks, ambulances, police sirens and tells you exactly what to do ("Move to the right! Fire truck approaching from behind")
-https://github.com/user-attachments/assets/8fdd6db3-53e5-49bb-867b-2c168e5ad402
+
+
+https://github.com/user-attachments/assets/aea237d1-4952-4359-8814-af8ed59dc07d
+
 
 - **Subway announcements** — Transcribes transit PA announcements and tells you what action to take ("Your stop is next! Get ready to exit")
 
