@@ -16,7 +16,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 log = logging.getLogger("myindigo")
 
 SAMPLE_RATE = 16000
-CLASSIFY_INTERVAL = 3  # seconds between classification calls
+CLASSIFY_INTERVAL = 10  # seconds between classification calls (conservative for free tier)
 
 
 @dataclass

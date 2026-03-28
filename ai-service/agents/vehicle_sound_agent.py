@@ -2,7 +2,7 @@ from google.adk.agents import LlmAgent
 
 vehicle_sound_agent = LlmAgent(
     name="vehicle_sound_agent",
-    model="gemini-2.5-flash",
+    model="gemini-2.0-flash",
     description="Analyzes vehicle/emergency sounds and scores risk. Called when DispatchAgent detects siren, horn, or crash sounds.",
     instruction="""You are VehicleSoundAgent. You receive a description of a detected vehicle sound.
 
