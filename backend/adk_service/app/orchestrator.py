@@ -117,8 +117,10 @@ async def dispatch_and_run(
             await send_event({
                 "type": "alert",
                 "scenario": "siren",
-                "title": result.get("title", "Emergency sound detected"),
-                "subtitle": result.get("subtitle", "Check your surroundings"),
+                "icon": "🚨",
+                "title": result.get("title", "Move to safety!"),
+                "subtitle": result.get("subtitle", "Emergency vehicle nearby"),
+                "action": result.get("action", "Step aside and stay alert"),
                 "risk": result.get("risk", "HIGH"),
             })
         else:
