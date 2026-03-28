@@ -39,7 +39,7 @@ async def debug_config() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "adk-live-service",
-        "gemini_live_model": settings.gemini_live_model,
+        "classify_model": settings.classify_model,
         "adk_agent_model": settings.adk_agent_model,
         "adk_app_name": settings.adk_app_name,
         "adk_key_source": settings.adk_gemini_api_key_source,

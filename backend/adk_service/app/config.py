@@ -42,8 +42,8 @@ class ServiceSettings:
                 self.adk_gemini_api_key_source = source
                 break
 
-        self.gemini_live_model = os.getenv(
-            "GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-latest"
+        self.classify_model = os.getenv(
+            "CLASSIFY_MODEL", "gemini-2.5-flash"
         )
         self.adk_agent_model = os.getenv("ADK_AGENT_MODEL", "gemini-2.5-flash")
         self.adk_app_name = os.getenv("ADK_APP_NAME", "myindigo")
